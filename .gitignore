@@ -1,33 +1,14 @@
-# AWS CDK
-cdk.out/
-*.d.ts
+# TypeScript/Node.js
+node_modules/
 *.js
 *.js.map
-node_modules/
+*.d.ts
+dist/
+build/
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git
-.mypy_cache
-.pytest_cache
-.hypothesis
+# AWS CDK
+cdk.out/
+.cdk.staging/
 
 # Environment variables
 .env
@@ -45,11 +26,12 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
-# Terraform
-*.tfstate
-*.tfstate.*
-.terraform/
-.terraform.lock.hcl
+# Logs
+*.log
+npm-debug.log*
 
-# Generated diagrams (optional - remove if you want to track them)
+# AWS
+.aws/
+
+# Generated diagrams (optional)
 # generated-diagrams/

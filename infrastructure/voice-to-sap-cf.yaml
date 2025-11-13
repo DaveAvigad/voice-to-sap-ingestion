@@ -1,0 +1,323 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Voice-to-SAP TypeScript System with Transcribe and Bedrock'
+
+Resources:
+  # S3 Buckets
+  VoiceInputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'voice-to-sap-input-ts-${AWS::AccountId}'
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  SummaryOutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'voice-to-sap-summaries-ts-${AWS::AccountId}'
+
+  # Lambda Function (TypeScript/Node.js)
+  SeverityLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  SeverityLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: voice-to-sap-severity-ts
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt SeverityLambdaRole.Arn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.log('Processing:', JSON.stringify(event, null, 2));
+            
+            try {
+              const { transcript, sentimentAnalysis } = event;
+              
+              let sentiment = 'neutral';
+              let intensity = 5;
+              
+              if (sentimentAnalysis && sentimentAnalysis.content) {
+                const content = sentimentAnalysis.content[0]?.text || '';
+                const sentimentMatch = content.match(/sentiment[:\s]*(positive|negative|neutral)/i);
+                const intensityMatch = content.match(/intensity[:\s]*(\d+)/i);
+                
+                sentiment = sentimentMatch ? sentimentMatch[1].toLowerCase() : 'neutral';
+                intensity = intensityMatch ? parseInt(intensityMatch[1]) : 5;
+              }
+              
+              const severity = calculateSeverity(sentiment, intensity, transcript);
+              
+              return {
+                ...event,
+                severity,
+                sentiment,
+                intensity,
+                processedAt: new Date().toISOString()
+              };
+              
+            } catch (error) {
+              console.error('Error:', error);
+              return {
+                ...event,
+                severity: 'MEDIUM',
+                sentiment: 'neutral',
+                intensity: 5,
+                error: error.message
+              };
+            }
+          };
+          
+          function calculateSeverity(sentiment, intensity, transcript) {
+            const urgentKeywords = ['urgent', 'critical', 'emergency', 'broken', 'down', 'not working', 'outage'];
+            const complaintKeywords = ['complaint', 'angry', 'frustrated', 'disappointed', 'terrible', 'awful'];
+            
+            const transcriptLower = (transcript || '').toLowerCase();
+            const hasUrgent = urgentKeywords.some(keyword => transcriptLower.includes(keyword));
+            const hasComplaint = complaintKeywords.some(keyword => transcriptLower.includes(keyword));
+            
+            if (sentiment === 'negative') {
+              if (intensity >= 8 || hasUrgent) return 'HIGH';
+              if (intensity >= 6 || hasComplaint) return 'MEDIUM';
+              return 'LOW';
+            } else if (sentiment === 'neutral') {
+              return hasUrgent ? 'MEDIUM' : 'LOW';
+            } else {
+              return 'LOW';
+            }
+          }
+
+  # Step Functions Role
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonTranscribeFullAccess
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+        - PolicyName: LambdaInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt SeverityLambda.Arn
+
+  # Step Functions with Real AI Services
+  VoiceToSapStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: VoiceToSapStateMachine-TS
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Voice-to-SAP with Transcribe and Bedrock",
+          "StartAt": "StartTranscription",
+          "States": {
+            "StartTranscription": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:transcribe:startTranscriptionJob",
+              "Parameters": {
+                "TranscriptionJobName.$": "$.jobName",
+                "Media": {
+                  "MediaFileUri.$": "$.s3Uri"
+                },
+                "MediaFormat": "wav",
+                "LanguageCode": "en-US",
+                "OutputBucketName": "${SummaryOutputBucket}",
+                "OutputKey.$": "States.Format('transcripts/{}.json', $.jobName)"
+              },
+              "Next": "WaitForTranscription",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3
+                }
+              ]
+            },
+            "WaitForTranscription": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "CheckTranscriptionStatus"
+            },
+            "CheckTranscriptionStatus": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:transcribe:getTranscriptionJob",
+              "Parameters": {
+                "TranscriptionJobName.$": "$.TranscriptionJobName"
+              },
+              "Next": "IsTranscriptionComplete"
+            },
+            "IsTranscriptionComplete": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.TranscriptionJob.TranscriptionJobStatus",
+                  "StringEquals": "COMPLETED",
+                  "Next": "GetTranscript"
+                },
+                {
+                  "Variable": "$.TranscriptionJob.TranscriptionJobStatus",
+                  "StringEquals": "FAILED",
+                  "Next": "TranscriptionFailed"
+                }
+              ],
+              "Default": "WaitForTranscription"
+            },
+            "GetTranscript": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+              "Parameters": {
+                "Bucket": "${SummaryOutputBucket}",
+                "Key.$": "States.Format('transcripts/{}.json', $.jobName)"
+              },
+              "Next": "AnalyzeSentiment",
+              "ResultPath": "$.transcriptFile"
+            },
+            "AnalyzeSentiment": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::bedrock:invokeModel",
+              "Parameters": {
+                "ModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+                "Body": {
+                  "anthropic_version": "bedrock-2023-05-31",
+                  "max_tokens": 1000,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content.$": "States.Format('Analyze sentiment of this transcript. Provide: 1) Sentiment (positive/negative/neutral), 2) Intensity (1-10). Transcript: {}', $.transcript)"
+                    }
+                  ]
+                }
+              },
+              "Next": "AssignSeverity",
+              "ResultPath": "$.sentimentAnalysis"
+            },
+            "AssignSeverity": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${SeverityLambda}",
+                "Payload.$": "$"
+              },
+              "Next": "GenerateSummary",
+              "ResultPath": "$.severityResult"
+            },
+            "GenerateSummary": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::bedrock:invokeModel",
+              "Parameters": {
+                "ModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+                "Body": {
+                  "anthropic_version": "bedrock-2023-05-31",
+                  "max_tokens": 500,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content.$": "States.Format('Create a summary for SAP ingestion. Include: issue, sentiment ({}), severity ({}), actions. Transcript: {}', $.severityResult.Payload.sentiment, $.severityResult.Payload.severity, $.transcript)"
+                    }
+                  ]
+                }
+              },
+              "Next": "SaveResult",
+              "ResultPath": "$.summary"
+            },
+            "SaveResult": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:s3:putObject",
+              "Parameters": {
+                "Bucket": "${SummaryOutputBucket}",
+                "Key.$": "States.Format('processed/{}.json', $.jobName)",
+                "Body.$": "States.JsonToString($)"
+              },
+              "Next": "SAPIntegration"
+            },
+            "SAPIntegration": {
+              "Type": "Pass",
+              "Parameters": {
+                "message": "Ready for Bedrock Agent SAP MCP integration",
+                "data.$": "$"
+              },
+              "End": true
+            },
+            "TranscriptionFailed": {
+              "Type": "Fail",
+              "Cause": "Transcription job failed"
+            }
+          }
+        }
+
+  # EventBridge Rule
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsExecute
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !GetAtt VoiceToSapStateMachine.Arn
+
+  S3UploadRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Trigger Step Functions on S3 upload"
+      EventPattern:
+        source: ["aws.s3"]
+        detail-type: ["Object Created"]
+        detail:
+          bucket:
+            name: [!Ref VoiceInputBucket]
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt VoiceToSapStateMachine.Arn
+          Id: "VoiceToSapTarget"
+          RoleArn: !GetAtt EventBridgeRole.Arn
+          InputTransformer:
+            InputPathsMap:
+              bucket: "$.detail.bucket.name"
+              key: "$.detail.object.key"
+            InputTemplate: |
+              {
+                "jobName": "<key>",
+                "s3Uri": "s3://<bucket>/<key>",
+                "transcript": "Test transcript - will be replaced by actual Transcribe output"
+              }
+
+Outputs:
+  VoiceInputBucket:
+    Value: !Ref VoiceInputBucket
+  SummaryOutputBucket:
+    Value: !Ref SummaryOutputBucket
+  StateMachineArn:
+    Value: !GetAtt VoiceToSapStateMachine.Arn
