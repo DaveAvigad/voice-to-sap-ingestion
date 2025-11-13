@@ -1,0 +1,22 @@
+[
+  {
+    "jobName": "manual-test-e4ecfb84",
+    "s3Uri": "s3://voice-to-sap-input/test-urgent_outage.json",
+    "transcript": "Hello, this is John Smith calling about a critical system outage. Our entire production environment has been down for the past 2 hours and we're losing money every minute. This is extremely urgent and needs immediate attention. Our customer ID is CUST-12345."
+  },
+  {
+    "jobName": "manual-test-0e4e302e",
+    "s3Uri": "s3://voice-to-sap-input/test-billing_complaint.json",
+    "transcript": "Hi, I'm calling to complain about my recent bill. I'm very frustrated because I was charged for services I didn't use. This is disappointing and I expect this to be resolved quickly. My account number is ACC-67890."
+  },
+  {
+    "jobName": "manual-test-a557812f",
+    "s3Uri": "s3://voice-to-sap-input/test-thank_you_call.json",
+    "transcript": "Hello, I just wanted to call and thank your support team for resolving my issue yesterday. The technician was very helpful and professional. Everything is working perfectly now. Great service!"
+  },
+  {
+    "jobName": "manual-test-4718a577",
+    "s3Uri": "s3://voice-to-sap-input/test-general_inquiry.json",
+    "transcript": "Hi, I have a question about your new service offerings. Could you please send me some information about the pricing plans? I'm considering upgrading my current package."
+  }
+]

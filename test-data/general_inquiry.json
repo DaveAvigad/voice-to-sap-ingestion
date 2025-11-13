@@ -1,0 +1,13 @@
+{
+  "jobName": "test-a8e5bf03",
+  "timestamp": "2025-11-13T12:05:57.038507",
+  "transcript": "Hi, I have a question about your new service offerings. Could you please send me some information about the pricing plans? I'm considering upgrading my current package.",
+  "expected_results": {
+    "severity": "LOW",
+    "sentiment": "neutral"
+  },
+  "metadata": {
+    "source": "test_generator",
+    "filename": "general_inquiry.json"
+  }
+}

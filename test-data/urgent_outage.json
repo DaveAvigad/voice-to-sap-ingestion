@@ -1,0 +1,13 @@
+{
+  "jobName": "test-fb986331",
+  "timestamp": "2025-11-13T12:05:57.036797",
+  "transcript": "Hello, this is John Smith calling about a critical system outage. Our entire production environment has been down for the past 2 hours and we're losing money every minute. This is extremely urgent and needs immediate attention. Our customer ID is CUST-12345.",
+  "expected_results": {
+    "severity": "HIGH",
+    "sentiment": "negative"
+  },
+  "metadata": {
+    "source": "test_generator",
+    "filename": "urgent_outage.json"
+  }
+}
