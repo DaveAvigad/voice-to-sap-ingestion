@@ -29,7 +29,7 @@ export class VoiceToSapStack extends cdk.Stack {
 
     // Lambda function for severity assignment (TypeScript)
     const severityLambda = new lambda.Function(this, 'SeverityAssignmentFunction', {
-      runtime: lambda.Runtime.NODEJS_18_X,
+      runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
       code: lambda.Code.fromInline(`
         exports.handler = async (event) => {

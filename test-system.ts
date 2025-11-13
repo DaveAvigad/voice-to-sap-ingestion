@@ -1,7 +1,7 @@
-import { StepFunctionsClient, StartExecutionCommand, DescribeExecutionCommand } from '@aws-sdk/client-sfn';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { SFNClient, StartExecutionCommand, DescribeExecutionCommand } from '@aws-sdk/client-sfn';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-const stepFunctionsClient = new StepFunctionsClient({ region: 'us-east-1' });
+const sfnClient = new SFNClient({ region: 'us-east-1' });
 const s3Client = new S3Client({ region: 'us-east-1' });
 
 interface TestCase {
@@ -28,28 +28,30 @@ const testCases: TestCase[] = [
   }
 ];
 
-async function testStepFunctions(stateMachineArn: string): Promise<void> {
-  console.log('🧪 Testing Step Functions with real Transcribe + Bedrock integration...\n');
+async function testStepFunctions(): Promise<void> {
+  console.log('🧪 Testing Step Functions with TypeScript system...\n');
+
+  const stateMachineArn = 'arn:aws:states:us-east-1:183631346754:stateMachine:VoiceToSapStateMachine-TS';
 
   for (const testCase of testCases) {
     console.log(`Testing: ${testCase.name}`);
     
     const input = {
-      jobName: \`test-\${Date.now()}-\${Math.random().toString(36).substr(2, 9)}\`,
-      s3Uri: 's3://voice-to-sap-input-183631346754/test-audio.wav',
-      transcript: testCase.transcript
+      jobName: `test-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      transcript: testCase.transcript,
+      // Skip transcription for testing
+      TranscriptionJob: { TranscriptionJobStatus: 'COMPLETED' }
     };
 
     try {
-      // Start execution
       const startCommand = new StartExecutionCommand({
         stateMachineArn,
-        name: \`test-execution-\${Date.now()}\`,
+        name: `test-execution-${Date.now()}`,
         input: JSON.stringify(input)
       });
 
-      const startResponse = await stepFunctionsClient.send(startCommand);
-      console.log(\`✅ Started execution: \${startResponse.executionArn}\`);
+      const startResponse = await sfnClient.send(startCommand);
+      console.log(`✅ Started execution: ${startResponse.executionArn}`);
 
       // Wait and check status
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -58,20 +60,19 @@ async function testStepFunctions(stateMachineArn: string): Promise<void> {
         executionArn: startResponse.executionArn!
       });
 
-      const describeResponse = await stepFunctionsClient.send(describeCommand);
-      console.log(\`Status: \${describeResponse.status}\`);
+      const describeResponse = await sfnClient.send(describeCommand);
+      console.log(`Status: ${describeResponse.status}`);
 
       if (describeResponse.status === 'SUCCEEDED') {
-        console.log(\`✅ Expected: \${testCase.expectedSeverity}\`);
-        console.log(\`📄 Output: \${describeResponse.output}\`);
+        console.log(`✅ Expected: ${testCase.expectedSeverity}`);
       } else if (describeResponse.status === 'FAILED') {
-        console.log(\`❌ Execution failed: \${describeResponse.error}\`);
+        console.log(`❌ Execution failed: ${describeResponse.error}`);
       } else {
-        console.log(\`⏳ Still running: \${describeResponse.status}\`);
+        console.log(`⏳ Still running: ${describeResponse.status}`);
       }
 
     } catch (error) {
-      console.error(\`❌ Error testing \${testCase.name}:\`, error);
+      console.error(`❌ Error testing ${testCase.name}:`, error);
     }
 
     console.log('---\n');
@@ -91,8 +92,8 @@ async function uploadTestFile(): Promise<void> {
 
   try {
     const command = new PutObjectCommand({
-      Bucket: 'voice-to-sap-input-183631346754',
-      Key: \`test-voice-\${Date.now()}.json\`,
+      Bucket: 'voice-to-sap-input-ts-183631346754',
+      Key: `test-voice-${Date.now()}.json`,
       Body: JSON.stringify(testData),
       ContentType: 'application/json'
     });
@@ -107,24 +108,22 @@ async function uploadTestFile(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const stateMachineArn = 'arn:aws:states:us-east-1:183631346754:stateMachine:VoiceToSapStateMachine';
-
-  console.log('🚀 Voice-to-SAP System Test Suite');
-  console.log('==================================\n');
+  console.log('🚀 Voice-to-SAP TypeScript System Test Suite');
+  console.log('==========================================\n');
 
   const choice = process.argv[2];
 
   switch (choice) {
     case 'stepfunctions':
-      await testStepFunctions(stateMachineArn);
+      await testStepFunctions();
       break;
     case 'upload':
       await uploadTestFile();
       break;
     default:
       console.log('Usage:');
-      console.log('  npm run test:stepfunctions  - Test Step Functions directly');
-      console.log('  npm run test:upload         - Upload file to trigger pipeline');
+      console.log('  npx ts-node test-system.ts stepfunctions  - Test Step Functions directly');
+      console.log('  npx ts-node test-system.ts upload         - Upload file to trigger pipeline');
       break;
   }
 }

@@ -1,0 +1,24 @@
+{
+  "name": "sap-notification-demo",
+  "version": "1.0.0",
+  "description": "An automated system that processes voice call recordings using AWS Transcribe, performs sentiment analysis with Amazon Bedrock, and ingests structured data into SAP using Bedrock Agent Core with MCP connector.",
+  "main": "index.js",
+  "scripts": {
+    "test:stepfunctions": "npx ts-node test-system.ts stepfunctions",
+    "test:upload": "npx ts-node test-system.ts upload",
+    "build": "cd infrastructure && npm run build",
+    "deploy": "./deploy.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.930.0",
+    "@aws-sdk/client-sfn": "^3.930.0"
+  }
+}

@@ -34,7 +34,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: voice-to-sap-severity-ts
-      Runtime: nodejs18.x
+      Runtime: nodejs20.x
       Handler: index.handler
       Role: !GetAtt SeverityLambdaRole.Arn
       Timeout: 300
