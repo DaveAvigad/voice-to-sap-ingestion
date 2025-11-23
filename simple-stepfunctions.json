@@ -1,0 +1,226 @@
+{
+  "Comment": "Simplified Voice-to-SAP pipeline for testing",
+  "StartAt": "CheckIfTesting",
+  "States": {
+    "CheckIfTesting": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.skipTranscription",
+          "BooleanEquals": true,
+          "Next": "TestAnalyzeSentiment"
+        },
+        {
+          "Variable": "$.s3Uri",
+          "IsPresent": true,
+          "Next": "StartTranscription"
+        }
+      ],
+      "Default": "MissingS3Uri"
+    },
+    "MissingS3Uri": {
+      "Type": "Fail",
+      "Cause": "Missing s3Uri for transcription. Either set skipTranscription=true for testing or provide s3Uri for production flow."
+    },
+    "StartTranscription": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:transcribe:startTranscriptionJob",
+      "Parameters": {
+        "TranscriptionJobName.$": "$.jobName",
+        "Media": {
+          "MediaFileUri.$": "$.s3Uri"
+        },
+        "MediaFormat": "wav",
+        "LanguageCode": "en-US",
+        "OutputBucketName": "voice-to-sap-summaries-183631346754",
+        "OutputKey.$": "States.Format('transcripts/{}.json', $.jobName)"
+      },
+      "Next": "WaitForTranscription",
+      "ResultPath": "$.transcriptionJob"
+    },
+    "WaitForTranscription": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "CheckTranscriptionStatus"
+    },
+    "CheckTranscriptionStatus": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:transcribe:getTranscriptionJob",
+      "Parameters": {
+        "TranscriptionJobName.$": "$.transcriptionJob.TranscriptionJob.TranscriptionJobName"
+      },
+      "Next": "IsTranscriptionComplete",
+      "ResultPath": "$.transcriptionResult"
+    },
+    "IsTranscriptionComplete": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.transcriptionResult.TranscriptionJob.TranscriptionJobStatus",
+          "StringEquals": "COMPLETED",
+          "Next": "GetTranscript"
+        },
+        {
+          "Variable": "$.transcriptionResult.TranscriptionJob.TranscriptionJobStatus",
+          "StringEquals": "FAILED",
+          "Next": "TranscriptionFailed"
+        }
+      ],
+      "Default": "WaitForTranscription"
+    },
+    "GetTranscript": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+      "Parameters": {
+        "Bucket": "voice-to-sap-summaries-183631346754",
+        "Key.$": "States.Format('transcripts/{}.json', $.jobName)"
+      },
+      "Next": "ParseTranscript",
+      "ResultPath": "$.transcriptFile"
+    },
+    "ParseTranscript": {
+      "Type": "Pass",
+      "Parameters": {
+        "transcript.$": "$.transcriptFile.Body"
+      },
+      "ResultPath": "$.parsedTranscript",
+      "Next": "ProdAnalyzeSentiment"
+    },
+    "TestAnalyzeSentiment": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 1000,
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Analyze the sentiment of this customer service call transcript. Provide: 1) Sentiment (positive/negative/neutral), 2) Intensity (1-10 scale). Transcript: {}', $.parsedTranscript.transcript)"
+            }
+          ]
+        }
+      },
+      "Next": "TestAssignSeverity",
+      "ResultPath": "$.sentimentAnalysis"
+    },
+    "ProdAnalyzeSentiment": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 1000,
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Analyze the sentiment of this customer service call transcript. Provide: 1) Sentiment (positive/negative/neutral), 2) Intensity (1-10 scale). Transcript: {}', $.parsedTranscript.transcript)"
+            }
+          ]
+        }
+      },
+      "Next": "ProdAssignSeverity",
+      "ResultPath": "$.sentimentAnalysis"
+    },
+    "TestAssignSeverity": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "voice-to-sap-severity-ts",
+        "Payload.$": "$"
+      },
+      "Next": "TestGenerateSummary",
+      "ResultPath": "$.severityResult"
+    },
+    "ProdAssignSeverity": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "voice-to-sap-severity-ts",
+        "Payload.$": "$"
+      },
+      "Next": "ProdGenerateSummary",
+      "ResultPath": "$.severityResult"
+    },
+    "TestGenerateSummary": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 500,
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Create a concise summary of this customer service call for SAP ingestion. Include: customer issue, sentiment ({}), severity ({}), and recommended actions. Transcript: {}', $.severityResult.Payload.sentiment, $.severityResult.Payload.severity, $.parsedTranscript.transcript)"
+            }
+          ]
+        }
+      },
+      "Next": "TestSaveResult",
+      "ResultPath": "$.summary"
+    },
+    "ProdGenerateSummary": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::bedrock:invokeModel",
+      "Parameters": {
+        "ModelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+        "Body": {
+          "anthropic_version": "bedrock-2023-05-31",
+          "max_tokens": 500,
+          "messages": [
+            {
+              "role": "user",
+              "content.$": "States.Format('Create a concise summary of this customer service call for SAP ingestion. Include: customer issue, sentiment ({}), severity ({}), and recommended actions. Transcript: {}', $.severityResult.Payload.sentiment, $.severityResult.Payload.severity, $.parsedTranscript.transcript)"
+            }
+          ]
+        }
+      },
+      "Next": "ProdSaveResult",
+      "ResultPath": "$.summary"
+    },
+    "TestSaveResult": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:putObject",
+      "Parameters": {
+        "Bucket": "voice-to-sap-summaries-183631346754",
+        "Key.$": "States.Format('processed/{}.json', $.jobName)",
+        "Body.$": "States.JsonToString($)"
+      },
+      "Next": "TestSAPIntegration"
+    },
+    "ProdSaveResult": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:putObject",
+      "Parameters": {
+        "Bucket": "voice-to-sap-summaries-183631346754",
+        "Key.$": "States.Format('processed/{}.json', $.jobName)",
+        "Body.$": "States.JsonToString($)"
+      },
+      "Next": "ProdSAPIntegration"
+    },
+    "TestSAPIntegration": {
+      "Type": "Pass",
+      "Parameters": {
+        "message": "Ready for SAP MCP integration (Test)",
+        "data.$": "$"
+      },
+      "End": true
+    },
+    "ProdSAPIntegration": {
+      "Type": "Pass",
+      "Parameters": {
+        "message": "Ready for SAP MCP integration (Production)",
+        "data.$": "$"
+      },
+      "End": true
+    },
+    "TranscriptionFailed": {
+      "Type": "Fail",
+      "Cause": "Transcription job failed"
+    }
+  }
+}

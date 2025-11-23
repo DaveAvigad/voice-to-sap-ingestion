@@ -36,7 +36,8 @@ export class VoiceToSapStack extends cdk.Stack {
           console.log('Processing event:', JSON.stringify(event, null, 2));
           
           try {
-            const { transcript, sentimentAnalysis } = event;
+            const transcript = event.parsedTranscript?.transcript || event.transcript || '';
+            const sentimentAnalysis = event.sentimentAnalysis;
             
             // Parse Bedrock sentiment response
             let sentiment = 'neutral';
@@ -59,6 +60,7 @@ export class VoiceToSapStack extends cdk.Stack {
               severity,
               sentiment,
               intensity,
+              transcript,
               processedAt: new Date().toISOString()
             };
             
@@ -114,14 +116,14 @@ export class VoiceToSapStack extends cdk.Stack {
       service: 'transcribe',
       action: 'startTranscriptionJob',
       parameters: {
-        'TranscriptionJobName': stepfunctions.JsonPath.stringAt('$.jobName'),
+        'TranscriptionJobName.$': '$.jobName',
         'Media': {
-          'MediaFileUri': stepfunctions.JsonPath.stringAt('$.s3Uri')
+          'MediaFileUri.$': '$.s3Uri'
         },
         'MediaFormat': 'wav',
         'LanguageCode': 'en-US',
         'OutputBucketName': summaryOutputBucket.bucketName,
-        'OutputKey': stepfunctions.JsonPath.format('transcripts/{}.json', stepfunctions.JsonPath.stringAt('$.jobName'))
+        'OutputKey.$': 'States.Format(\'transcripts/{}.json\', $.jobName)'
       },
       iamResources: ['*'],
       resultPath: '$.transcriptionJob',
@@ -135,7 +137,7 @@ export class VoiceToSapStack extends cdk.Stack {
       service: 'transcribe',
       action: 'getTranscriptionJob',
       parameters: {
-        'TranscriptionJobName': stepfunctions.JsonPath.stringAt('$.transcriptionJob.TranscriptionJobName'),
+        'TranscriptionJobName.$': '$.transcriptionJob.TranscriptionJob.TranscriptionJobName',
       },
       iamResources: ['*'],
       resultPath: '$.transcriptionResult',
@@ -147,70 +149,118 @@ export class VoiceToSapStack extends cdk.Stack {
       action: 'getObject',
       parameters: {
         'Bucket': summaryOutputBucket.bucketName,
-        'Key': stepfunctions.JsonPath.format('transcripts/{}.json', stepfunctions.JsonPath.stringAt('$.jobName'))
+        'Key.$': 'States.Format(\'transcripts/{}.json\', $.jobName)'
       },
       iamResources: [summaryOutputBucket.arnForObjects('*')],
       resultPath: '$.transcriptFile',
     });
 
-    // Bedrock sentiment analysis
-    const sentimentAnalysisTask = new tasks.BedrockInvokeModel(this, 'AnalyzeSentiment', {
-      model: bedrock.FoundationModel.fromFoundationModelId(this, 'ClaudeModel', 
+    // Parse transcript content
+    const parseTranscriptTask = new stepfunctions.Pass(this, 'ParseTranscript', {
+      parameters: {
+        'transcript.$': 'States.StringToJson($.transcriptFile.Body).results.transcripts[0].transcript'
+      },
+      resultPath: '$.parsedTranscript',
+    });
+
+    // Bedrock sentiment analysis for testing flow
+    const testSentimentAnalysisTask = new tasks.BedrockInvokeModel(this, 'TestAnalyzeSentiment', {
+      model: bedrock.FoundationModel.fromFoundationModelId(this, 'TestClaudeModel', 
         bedrock.FoundationModelIdentifier.ANTHROPIC_CLAUDE_3_SONNET_20240229_V1_0),
       body: stepfunctions.TaskInput.fromObject({
         'anthropic_version': 'bedrock-2023-05-31',
         'max_tokens': 1000,
         'messages': [{
           'role': 'user',
-          'content': stepfunctions.JsonPath.format(
-            'Analyze the sentiment of this customer service call transcript. Provide: 1) Sentiment (positive/negative/neutral), 2) Intensity (1-10 scale). Transcript: {}',
-            stepfunctions.JsonPath.stringAt('$.transcript')
-          )
+          'content.$': 'States.Format(\'Analyze the sentiment of this customer service call transcript. Provide: 1) Sentiment (positive/negative/neutral), 2) Intensity (1-10 scale). Transcript: {}\', $.parsedTranscript.transcript)'
         }]
       }),
       resultPath: '$.sentimentAnalysis',
     });
 
-    // Lambda task for severity assignment
-    const severityTask = new tasks.LambdaInvoke(this, 'AssignSeverity', {
+    // Bedrock sentiment analysis for production flow
+    const prodSentimentAnalysisTask = new tasks.BedrockInvokeModel(this, 'ProdAnalyzeSentiment', {
+      model: bedrock.FoundationModel.fromFoundationModelId(this, 'ProdClaudeModel', 
+        bedrock.FoundationModelIdentifier.ANTHROPIC_CLAUDE_3_SONNET_20240229_V1_0),
+      body: stepfunctions.TaskInput.fromObject({
+        'anthropic_version': 'bedrock-2023-05-31',
+        'max_tokens': 1000,
+        'messages': [{
+          'role': 'user',
+          'content.$': 'States.Format(\'Analyze the sentiment of this customer service call transcript. Provide: 1) Sentiment (positive/negative/neutral), 2) Intensity (1-10 scale). Transcript: {}\', $.parsedTranscript.transcript)'
+        }]
+      }),
+      resultPath: '$.sentimentAnalysis',
+    });
+
+    // Lambda task for severity assignment - testing
+    const testSeverityTask = new tasks.LambdaInvoke(this, 'TestAssignSeverity', {
       lambdaFunction: severityLambda,
       resultPath: '$.severityResult',
     });
 
-    // Bedrock summarization
-    const summarizationTask = new tasks.BedrockInvokeModel(this, 'GenerateSummary', {
-      model: bedrock.FoundationModel.fromFoundationModelId(this, 'ClaudeModelSummary', 
+    // Lambda task for severity assignment - production
+    const prodSeverityTask = new tasks.LambdaInvoke(this, 'ProdAssignSeverity', {
+      lambdaFunction: severityLambda,
+      resultPath: '$.severityResult',
+    });
+
+    // Bedrock summarization - testing
+    const testSummarizationTask = new tasks.BedrockInvokeModel(this, 'TestGenerateSummary', {
+      model: bedrock.FoundationModel.fromFoundationModelId(this, 'TestClaudeModelSummary', 
         bedrock.FoundationModelIdentifier.ANTHROPIC_CLAUDE_3_SONNET_20240229_V1_0),
       body: stepfunctions.TaskInput.fromObject({
         'anthropic_version': 'bedrock-2023-05-31',
         'max_tokens': 500,
         'messages': [{
           'role': 'user',
-          'content': stepfunctions.JsonPath.format(
-            'Create a concise summary of this customer service call for SAP ingestion. Include: customer issue, sentiment ({}), severity ({}), and recommended actions. Transcript: {}',
-            stepfunctions.JsonPath.stringAt('$.severityResult.Payload.sentiment'),
-            stepfunctions.JsonPath.stringAt('$.severityResult.Payload.severity'),
-            stepfunctions.JsonPath.stringAt('$.transcript')
-          )
+          'content.$': 'States.Format(\'Create a concise summary of this customer service call for SAP ingestion. Include: customer issue, sentiment ({}), severity ({}), and recommended actions. Transcript: {}\', $.severityResult.Payload.sentiment, $.severityResult.Payload.severity, $.severityResult.Payload.transcript)'
         }]
       }),
       resultPath: '$.summary',
     });
 
-    // Save final result to S3
-    const saveResultTask = new tasks.CallAwsService(this, 'SaveResult', {
+    // Bedrock summarization - production
+    const prodSummarizationTask = new tasks.BedrockInvokeModel(this, 'ProdGenerateSummary', {
+      model: bedrock.FoundationModel.fromFoundationModelId(this, 'ProdClaudeModelSummary', 
+        bedrock.FoundationModelIdentifier.ANTHROPIC_CLAUDE_3_SONNET_20240229_V1_0),
+      body: stepfunctions.TaskInput.fromObject({
+        'anthropic_version': 'bedrock-2023-05-31',
+        'max_tokens': 500,
+        'messages': [{
+          'role': 'user',
+          'content.$': 'States.Format(\'Create a concise summary of this customer service call for SAP ingestion. Include: customer issue, sentiment ({}), severity ({}), and recommended actions. Transcript: {}\', $.severityResult.Payload.sentiment, $.severityResult.Payload.severity, $.severityResult.Payload.transcript)'
+        }]
+      }),
+      resultPath: '$.summary',
+    });
+
+    // Save final result to S3 - testing
+    const testSaveResultTask = new tasks.CallAwsService(this, 'TestSaveResult', {
       service: 's3',
       action: 'putObject',
       parameters: {
         'Bucket': summaryOutputBucket.bucketName,
-        'Key': stepfunctions.JsonPath.format('processed/{}.json', stepfunctions.JsonPath.stringAt('$.jobName')),
-        'Body': stepfunctions.JsonPath.stringAt('States.JsonToString($)')
+        'Key.$': 'States.Format(\'processed/{}.json\', $.jobName)',
+        'Body.$': 'States.JsonToString($)'
       },
       iamResources: [summaryOutputBucket.arnForObjects('*')],
     });
 
-    // Bedrock Agent for SAP integration (placeholder)
-    const sapIntegrationTask = new stepfunctions.Pass(this, 'SAPIntegration', {
+    // Save final result to S3 - production
+    const prodSaveResultTask = new tasks.CallAwsService(this, 'ProdSaveResult', {
+      service: 's3',
+      action: 'putObject',
+      parameters: {
+        'Bucket': summaryOutputBucket.bucketName,
+        'Key.$': 'States.Format(\'processed/{}.json\', $.jobName)',
+        'Body.$': 'States.JsonToString($)'
+      },
+      iamResources: [summaryOutputBucket.arnForObjects('*')],
+    });
+
+    // Bedrock Agent for SAP integration (placeholder) - testing
+    const testSapIntegrationTask = new stepfunctions.Pass(this, 'TestSAPIntegration', {
       comment: 'Placeholder for Bedrock Agent SAP MCP integration',
       parameters: {
         'message': 'Ready for SAP MCP integration',
@@ -218,16 +268,36 @@ export class VoiceToSapStack extends cdk.Stack {
       }
     });
 
+    // Bedrock Agent for SAP integration (placeholder) - production
+    const prodSapIntegrationTask = new stepfunctions.Pass(this, 'ProdSAPIntegration', {
+      comment: 'Placeholder for Bedrock Agent SAP MCP integration',
+      parameters: {
+        'message': 'Ready for SAP MCP integration',
+        'data.$': '$'
+      }
+    });
+
+    // Choice state for testing vs production flow
+    const isTestingChoice = new stepfunctions.Choice(this, 'IsTestingFlow');
+    
     // Choice state for transcription completion
     const transcriptionChoice = new stepfunctions.Choice(this, 'IsTranscriptionComplete');
     
-    // Define the workflow with proper chaining
+    // Testing flow - skip transcription
+    const testingFlow = testSentimentAnalysisTask
+      .next(testSeverityTask)
+      .next(testSummarizationTask)
+      .next(testSaveResultTask)
+      .next(testSapIntegrationTask);
+
+    // Production flow - full transcription pipeline
     const transcriptionCompleteFlow = getTranscriptTask
-      .next(sentimentAnalysisTask)
-      .next(severityTask)
-      .next(summarizationTask)
-      .next(saveResultTask)
-      .next(sapIntegrationTask);
+      .next(parseTranscriptTask)
+      .next(prodSentimentAnalysisTask)
+      .next(prodSeverityTask)
+      .next(prodSummarizationTask)
+      .next(prodSaveResultTask)
+      .next(prodSapIntegrationTask);
 
     const transcriptionFailedFlow = new stepfunctions.Fail(this, 'TranscriptionFailed', {
       cause: 'Transcription job failed'
@@ -248,8 +318,16 @@ export class VoiceToSapStack extends cdk.Stack {
       )
       .otherwise(waitAndCheckFlow);
 
+    // Main choice: testing vs production
+    isTestingChoice
+      .when(
+        stepfunctions.Condition.booleanEquals('$.skipTranscription', true),
+        testingFlow
+      )
+      .otherwise(transcribeTask.next(waitAndCheckFlow));
+
     // Define the main workflow
-    const definition = transcribeTask.next(waitAndCheckFlow);
+    const definition = isTestingChoice;
 
     // Create Step Functions state machine
     const stateMachine = new stepfunctions.StateMachine(this, 'VoiceToSapStateMachine', {
@@ -273,8 +351,8 @@ export class VoiceToSapStack extends cdk.Stack {
 
     s3Rule.addTarget(new targets.SfnStateMachine(stateMachine, {
       input: events.RuleTargetInput.fromObject({
-        jobName: events.EventField.fromPath('$.detail.object.key'),
-        s3Uri: events.EventField.fromPath('$.detail.object.key').concat(voiceInputBucket.bucketName, 's3://', '/'),
+        jobName: events.EventField.fromPath('$.detail.object.key').replace('.wav', '').replace('.mp3', '').replace('.json', ''),
+        s3Uri: `s3://${voiceInputBucket.bucketName}/`.concat(events.EventField.fromPath('$.detail.object.key')),
       })
     }));
 

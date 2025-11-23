@@ -31,16 +31,20 @@ const testCases: TestCase[] = [
 async function testStepFunctions(): Promise<void> {
   console.log('🧪 Testing Step Functions with TypeScript system...\n');
 
+  // Use the actual state machine ARN
   const stateMachineArn = 'arn:aws:states:us-east-1:183631346754:stateMachine:VoiceToSapStateMachine-TS';
 
   for (const testCase of testCases) {
     console.log(`Testing: ${testCase.name}`);
     
+    // Create a test input that bypasses transcription
     const input = {
       jobName: `test-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      transcript: testCase.transcript,
-      // Skip transcription for testing
-      TranscriptionJob: { TranscriptionJobStatus: 'COMPLETED' }
+      parsedTranscript: {
+        transcript: testCase.transcript
+      },
+      // Skip transcription steps by providing completed status
+      skipTranscription: true
     };
 
     try {
@@ -54,7 +58,7 @@ async function testStepFunctions(): Promise<void> {
       console.log(`✅ Started execution: ${startResponse.executionArn}`);
 
       // Wait and check status
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      await new Promise(resolve => setTimeout(resolve, 15000));
 
       const describeCommand = new DescribeExecutionCommand({
         executionArn: startResponse.executionArn!
@@ -65,8 +69,13 @@ async function testStepFunctions(): Promise<void> {
 
       if (describeResponse.status === 'SUCCEEDED') {
         console.log(`✅ Expected: ${testCase.expectedSeverity}`);
+        if (describeResponse.output) {
+          const output = JSON.parse(describeResponse.output);
+          console.log(`Actual severity: ${output.severityResult?.Payload?.severity || 'Unknown'}`);
+        }
       } else if (describeResponse.status === 'FAILED') {
         console.log(`❌ Execution failed: ${describeResponse.error}`);
+        console.log(`Cause: ${describeResponse.cause}`);
       } else {
         console.log(`⏳ Still running: ${describeResponse.status}`);
       }
@@ -91,11 +100,12 @@ async function uploadTestFile(): Promise<void> {
   };
 
   try {
+    const bucketName = 'voice-to-sap-input-183631346754';
     const command = new PutObjectCommand({
-      Bucket: 'voice-to-sap-input-ts-183631346754',
-      Key: `test-voice-${Date.now()}.json`,
+      Bucket: bucketName,
+      Key: `test-voice-${Date.now()}.wav`,
       Body: JSON.stringify(testData),
-      ContentType: 'application/json'
+      ContentType: 'audio/wav'
     });
 
     await s3Client.send(command);
