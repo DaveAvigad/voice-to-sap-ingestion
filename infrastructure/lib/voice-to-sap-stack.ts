@@ -27,75 +27,11 @@ export class VoiceToSapStack extends cdk.Stack {
       autoDeleteObjects: true,
     });
 
-    // Lambda function for severity assignment (TypeScript)
+    // Lambda function for severity assignment
     const severityLambda = new lambda.Function(this, 'SeverityAssignmentFunction', {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      code: lambda.Code.fromInline(`
-        exports.handler = async (event) => {
-          console.log('Processing event:', JSON.stringify(event, null, 2));
-          
-          try {
-            const transcript = event.parsedTranscript?.transcript || event.transcript || '';
-            const sentimentAnalysis = event.sentimentAnalysis;
-            
-            // Parse Bedrock sentiment response
-            let sentiment = 'neutral';
-            let intensity = 5;
-            
-            if (sentimentAnalysis && sentimentAnalysis.content) {
-              const content = sentimentAnalysis.content[0]?.text || '';
-              const sentimentMatch = content.match(/sentiment[:\\s]*(positive|negative|neutral)/i);
-              const intensityMatch = content.match(/intensity[:\\s]*(\\d+)/i);
-              
-              sentiment = sentimentMatch ? sentimentMatch[1].toLowerCase() : 'neutral';
-              intensity = intensityMatch ? parseInt(intensityMatch[1]) : 5;
-            }
-            
-            // Calculate severity based on sentiment, intensity, and keywords
-            const severity = calculateSeverity(sentiment, intensity, transcript);
-            
-            return {
-              ...event,
-              severity,
-              sentiment,
-              intensity,
-              transcript,
-              processedAt: new Date().toISOString()
-            };
-            
-          } catch (error) {
-            console.error('Error processing:', error);
-            return {
-              ...event,
-              severity: 'MEDIUM',
-              sentiment: 'neutral',
-              intensity: 5,
-              error: error.message,
-              processedAt: new Date().toISOString()
-            };
-          }
-        };
-        
-        function calculateSeverity(sentiment, intensity, transcript) {
-          const urgentKeywords = ['urgent', 'critical', 'emergency', 'broken', 'down', 'not working', 'outage'];
-          const complaintKeywords = ['complaint', 'angry', 'frustrated', 'disappointed', 'terrible', 'awful'];
-          
-          const transcriptLower = (transcript || '').toLowerCase();
-          const hasUrgent = urgentKeywords.some(keyword => transcriptLower.includes(keyword));
-          const hasComplaint = complaintKeywords.some(keyword => transcriptLower.includes(keyword));
-          
-          if (sentiment === 'negative') {
-            if (intensity >= 8 || hasUrgent) return 'HIGH';
-            if (intensity >= 6 || hasComplaint) return 'MEDIUM';
-            return 'LOW';
-          } else if (sentiment === 'neutral') {
-            return hasUrgent ? 'MEDIUM' : 'LOW';
-          } else {
-            return 'LOW';
-          }
-        }
-      `),
+      code: lambda.Code.fromAsset('lambda/severity-assignment'),
       timeout: cdk.Duration.minutes(5),
     });
 

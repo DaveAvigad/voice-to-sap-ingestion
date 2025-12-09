@@ -1,204 +1,295 @@
-# Voice-to-SAP Ingestion System (TypeScript)
+# Voice-to-SAP Notification System with MCP Integration
 
-An automated system that processes voice call recordings using AWS Transcribe, performs sentiment analysis with Amazon Bedrock, and ingests structured data into SAP using Bedrock Agent Core with MCP connector.
+An automated system that processes voice call recordings using AWS AI services and integrates with SAP via Model Context Protocol (MCP).
 
-## Architecture
+## 🎯 Overview
 
-The system processes voice files through the following pipeline:
+This system processes voice recordings through an AI pipeline and automatically creates incidents in SAP S/4HANA:
 
-1. **Voice File Upload** - Voice files uploaded to S3 trigger the processing pipeline via EventBridge
-2. **AWS Transcribe** - Converts voice to text with high accuracy
-3. **Bedrock Sentiment Analysis** - Claude 3 Sonnet analyzes sentiment and emotional intensity
-4. **Severity Assignment** - TypeScript Lambda function assigns severity levels based on AI analysis
-5. **Bedrock Summarization** - Generates concise summaries optimized for SAP ingestion
-6. **SAP Integration** - Bedrock Agent with SAP MCP connector creates incidents/records in SAP
+**Voice Call → Transcription → Sentiment Analysis → SAP Incident Creation**
 
-## Technology Stack
-
-- **Language**: TypeScript
-- **Infrastructure**: AWS CDK
-- **AI Services**: Amazon Bedrock (Claude 3 Sonnet), AWS Transcribe
-- **Orchestration**: AWS Step Functions
-- **Storage**: Amazon S3
-- **Events**: Amazon EventBridge
-- **Compute**: AWS Lambda (Node.js 18.x)
-
-## Project Structure
+## 🏗️ Architecture
 
 ```
-├── infrastructure/          # CDK TypeScript infrastructure
-│   ├── lib/
-│   │   └── voice-to-sap-stack.ts    # Main CDK stack
-│   ├── bin/
-│   │   └── infrastructure.ts        # CDK app entry point
-│   └── package.json
-├── test-system.ts          # TypeScript test suite
-├── bedrock-agent-config.ts # Bedrock Agent configuration
-├── deploy.sh              # Deployment script
-└── README.md
+Voice File → S3 → EventBridge → Step Functions
+                                      ↓
+                                 Transcribe
+                                      ↓
+                              Bedrock (Sentiment)
+                                      ↓
+                              Lambda (Severity)
+                                      ↓
+                              Bedrock (Summary)
+                                      ↓
+                         Lambda (SAP Integration) ← NEW!
+                                      ↓
+                              Cognito Auth ← NEW!
+                                      ↓
+                            AgentCore Runtime ← NEW!
+                                      ↓
+                              MCP Server ← NEW!
+                                      ↓
+                              SAP System ✨
 ```
 
-## Setup & Deployment
+See `docs/diagrams/` for detailed architecture diagrams.
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-1. **AWS CLI configured** with appropriate permissions
-2. **Node.js 18+** and npm installed
-3. **AWS CDK CLI** installed: `npm install -g aws-cdk`
-4. **Bedrock models enabled** in your AWS account (Claude 3 Sonnet)
+- AWS Account with Bedrock access
+- Node.js 18+
+- Python 3.11+
+- AWS CLI configured
+- SAP system access
 
-### Deploy
+### 1. Clone and Install
 
 ```bash
-# Clone and navigate to project
-cd voice-to-sap-ingestion
-
-# Run deployment script
-./deploy.sh
+git clone <repository-url>
+cd SAP-Notification-Demo
+cd infrastructure
+npm install
 ```
 
-### Manual Deployment
+### 2. Configure Environment
+
+```bash
+# Copy example environment file
+cp env.example env
+
+# Edit env file with your configuration:
+# - AWS_ACCOUNT_ID
+# - SAP_BASE_URL
+# - SAP credentials (Basic Auth or OAuth)
+```
+
+### 3. Deploy MCP Server
+
+See `docs/guides/MCP_DEPLOYMENT_GUIDE.md` for detailed instructions.
+
+**Quick version:**
+```bash
+# Request AWS account allowlisting first (see docs/guides/ALLOWLIST_REQUEST.md)
+
+# Then deploy MCP server
+cd ../bifrost-launch-kit
+./setup-mcp.sh
+
+# Integrate with project
+cd ../SAP-Notification-Demo
+./docs/scripts/integrate-mcp.sh
+```
+
+### 4. Deploy Infrastructure
 
 ```bash
 cd infrastructure
-npm install
-npm run build
-npx cdk bootstrap
+npx cdk bootstrap  # First time only
 npx cdk deploy
 ```
 
-## Testing
+### 5. Test
 
-### Test Step Functions Directly
 ```bash
-cd infrastructure
-npm run test:stepfunctions
+# Upload test voice file
+npm run test:upload
+
+# Monitor execution
+aws stepfunctions list-executions --state-machine-arn <arn>
 ```
 
-### Test via S3 Upload (EventBridge trigger)
+## 📁 Project Structure
+
+```
+SAP-Notification-Demo/
+├── docs/
+│   ├── guides/              # Deployment and setup guides
+│   ├── diagrams/            # Architecture diagrams
+│   └── scripts/             # Helper scripts
+├── infrastructure/
+│   ├── lib/                 # CDK stack definitions
+│   └── lambda/              # Lambda function code
+├── test-data/               # Sample voice files
+├── generated-diagrams/      # Generated architecture diagrams
+├── env.example              # Example environment configuration
+└── README.md                # This file
+```
+
+## 📚 Documentation
+
+### Getting Started
+- **[MCP Deployment Guide](docs/guides/MCP_DEPLOYMENT_GUIDE.md)** - Complete deployment instructions
+- **[Allowlist Request](docs/guides/ALLOWLIST_REQUEST.md)** - AWS account allowlisting
+- **[Deployment Checklist](docs/guides/DEPLOYMENT_CHECKLIST.md)** - Pre-deployment checklist
+
+### Architecture
+- **[Architecture Diagrams](docs/diagrams/)** - Visual architecture documentation
+- **[Mermaid Diagrams](docs/diagrams/ARCHITECTURE_DIAGRAM.md)** - Interactive diagrams
+
+### Scripts
+- **[Integration Script](docs/scripts/integrate-mcp.sh)** - MCP integration automation
+- **[Diagram Generator](docs/scripts/generate_architecture_diagram.py)** - Generate diagrams
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Create an `env` file based on `env.example`:
+
+```bash
+# AWS Configuration
+AWS_ACCOUNT_ID=your-account-id
+AWS_REGION=us-east-1
+
+# SAP Configuration
+SAP_BASE_URL=https://your-sap-system/sap/opu/odata/sap/
+SAP_AUTH_FLOW=BASIC  # or M2M or USER_FEDERATION
+
+# Basic Auth (if using)
+USERNAME=your-username
+PASSWORD=your-password
+
+# OAuth (if using)
+SAP_CLIENT_ID=your-client-id
+SAP_CLIENT_SECRET=your-client-secret
+SAP_SCOPE=/IWFND/SG_MED_CATALOG_0002
+
+# MCP Configuration (auto-generated after deployment)
+MCP_URL=
+COGNITO_CLIENT_ID=
+COGNITO_CLIENT_SECRET=
+COGNITO_TOKEN_ENDPOINT=
+```
+
+### MCP Server Operations
+
+Configure which operations are enabled:
+
+```bash
+READ_ENABLED=true
+WRITE_ENABLED=true
+CREATE_ENABLED=true
+UPDATE_ENABLED=false
+DELETE_ENABLED=false
+```
+
+## 🧪 Testing
+
+### Test MCP Server
+```bash
+cd bifrost-launch-kit
+source venv/bin/activate
+python client/strands_multi_auth_client.py
+```
+
+### Test Voice Processing
 ```bash
 cd infrastructure
 npm run test:upload
 ```
 
-### Local Development
+### Monitor Logs
 ```bash
-cd infrastructure
-npm run watch    # Watch for TypeScript changes
-npm run build    # Build TypeScript
-npx cdk diff     # Preview changes
-npx cdk synth    # Generate CloudFormation
+aws logs tail /aws/lambda/VoiceToSapStack-SAPIntegrationFunction --follow
 ```
 
-## Components
+## 🔐 Security
 
-### 🎯 **Core Services**
-- **S3 Buckets**: Input (voice files) and output (processed results)
-- **AWS Transcribe**: High-accuracy voice-to-text conversion
-- **Amazon Bedrock**: Claude 3 Sonnet for sentiment analysis and summarization
-- **Step Functions**: Orchestrates the complete pipeline with error handling
-- **Lambda Function**: TypeScript-based severity assignment logic
-- **EventBridge**: Event-driven architecture for automatic processing
-
-### 🤖 **AI Integration**
-- **Sentiment Analysis**: Bedrock analyzes emotional tone and intensity (1-10 scale)
-- **Severity Classification**: AI-driven severity assignment (HIGH/MEDIUM/LOW)
-- **Intelligent Summarization**: Context-aware summaries for SAP ingestion
-- **Bedrock Agent**: Ready for SAP MCP connector integration
-
-### 📊 **Data Flow**
-1. Voice file → S3 input bucket
-2. EventBridge → Step Functions execution
-3. Transcribe → Text extraction
-4. Bedrock → Sentiment analysis
-5. Lambda → Severity assignment
-6. Bedrock → Summary generation
-7. S3 → Processed results storage
-8. Bedrock Agent → SAP ingestion (via MCP)
-
-## SAP Integration
-
-The system includes a pre-configured Bedrock Agent for SAP integration:
-
-### Agent Capabilities
-- **Incident Creation**: Automatically creates SAP incidents from call data
-- **Customer Updates**: Updates customer records with interaction history
-- **History Retrieval**: Accesses previous customer interactions for context
-- **Error Handling**: Graceful handling of SAP system errors
-
-### MCP Connector Integration
-The Bedrock Agent is configured to work with SAP MCP connectors providing:
-- Standardized API endpoints for SAP operations
-- Authentication and authorization handling
-- Data validation and transformation
-- Real-time status updates
-
-## Monitoring & Observability
-
-- **CloudWatch Logs**: Detailed execution logs for all components
-- **Step Functions Console**: Visual workflow monitoring
-- **X-Ray Tracing**: End-to-end request tracing (can be enabled)
-- **CloudWatch Metrics**: Performance and error metrics
-
-## Configuration
-
-### Environment Variables
-Set in CDK stack deployment:
-- `CDK_DEFAULT_ACCOUNT`: AWS account ID
-- `CDK_DEFAULT_REGION`: AWS region (default: us-east-1)
-
-### Bedrock Models
-Required models (request access in Bedrock console):
-- `anthropic.claude-3-sonnet-20240229-v1:0`
-
-## Security
-
-- **IAM Roles**: Least privilege access for all services
-- **S3 Bucket Policies**: Secure access controls
-- **VPC Integration**: Can be configured for private networking
+- **Credentials**: Never commit credentials to Git
+- **Environment Files**: `env` file is gitignored
+- **IAM Roles**: Least privilege access
 - **Encryption**: S3 server-side encryption enabled
+- **Authentication**: Cognito for MCP, Basic/OAuth for SAP
 
-## Cost Optimization
+## 🛠️ Technology Stack
 
-- **On-Demand Processing**: Pay only for actual voice file processing
-- **Efficient Transcription**: Optimized for common audio formats
-- **Smart Batching**: Bedrock calls optimized for cost efficiency
-- **S3 Lifecycle**: Automatic cleanup of temporary files
+- **Infrastructure**: AWS CDK (TypeScript)
+- **Compute**: AWS Lambda (Node.js 18.x)
+- **AI Services**: Amazon Bedrock (Claude 3.7 Sonnet), AWS Transcribe
+- **Orchestration**: AWS Step Functions
+- **Storage**: Amazon S3
+- **Events**: Amazon EventBridge
+- **Integration**: MCP Server on AgentCore Runtime
+- **Authentication**: Amazon Cognito
 
-## Troubleshooting
+## 📊 Components
+
+### Existing Components
+- S3 Buckets (input/output)
+- EventBridge Rule
+- Step Functions State Machine
+- AWS Transcribe
+- Amazon Bedrock (Claude 3.7)
+- Lambda (Severity Assignment)
+
+### New MCP Components
+- Lambda (SAP Integration)
+- Amazon Cognito User Pool
+- AgentCore Runtime
+- MCP Server Container
+- SAP Connection
+
+## 🐛 Troubleshooting
 
 ### Common Issues
-1. **Bedrock Access Denied**: Enable Claude 3 Sonnet in Bedrock console
-2. **CDK Bootstrap**: Run `npx cdk bootstrap` if deployment fails
-3. **Permissions**: Ensure AWS CLI has sufficient permissions
-4. **Node.js Version**: Requires Node.js 18+ for Lambda runtime compatibility
 
-### Debug Commands
-```bash
-# Check CDK diff
-npx cdk diff
+**Access Denied to S3**
+→ Account not allowlisted. See `docs/guides/ALLOWLIST_REQUEST.md`
 
-# View synthesized template
-npx cdk synth
+**MCP_URL not found**
+→ Deploy MCP server first: `./setup-mcp.sh`
 
-# Check Step Functions execution
-aws stepfunctions describe-execution --execution-arn <arn>
+**Lambda timeout**
+→ Increase timeout in CDK stack
 
-# View Lambda logs
-aws logs tail /aws/lambda/VoiceToSapStack-SeverityAssignmentFunction
-```
+**SAP connection failed**
+→ Verify SAP system accessibility and credentials
 
-## Architecture Diagram
+See `docs/guides/MCP_DEPLOYMENT_GUIDE.md` Section 8 for detailed troubleshooting.
 
-![Architecture](generated-diagrams/voice-to-sap-architecture.png)
+## 📈 Monitoring
 
-## Contributing
+- **CloudWatch Logs**: All Lambda and Step Functions logs
+- **CloudWatch Metrics**: Performance and error metrics
+- **AgentCore Runtime**: Runtime status and invocation logs
+- **Step Functions Console**: Visual workflow monitoring
 
-1. Make changes in TypeScript files
-2. Run `npm run build` to compile
-3. Test with `npm run test:stepfunctions`
-4. Deploy with `npx cdk deploy`
+## 🚀 Deployment Timeline
 
-## License
+1. **Request Allowlisting** (1-2 days) - See `docs/guides/ALLOWLIST_REQUEST.md`
+2. **Deploy MCP Server** (15 min) - Run `setup-mcp.sh`
+3. **Integrate Project** (5 min) - Run `integrate-mcp.sh`
+4. **Deploy Infrastructure** (10 min) - Run `npx cdk deploy`
+5. **Test & Verify** (15 min) - Run `npm run test:upload`
 
-This project is licensed under the MIT License.
+**Total**: ~45 minutes (after allowlisting)
+
+## 🤝 Contributing
+
+1. Create feature branch
+2. Make changes
+3. Test thoroughly
+4. Submit pull request
+
+## 📝 License
+
+MIT License
+
+## 👥 Team
+
+- **Project Lead**: [Your Name]
+- **Contributors**: Shirli, [Others]
+
+## 📞 Support
+
+- **Documentation**: See `docs/` directory
+- **Issues**: Create GitHub issue
+- **Questions**: Contact team lead
+
+---
+
+**Status**: Ready for Deployment  
+**Last Updated**: December 6, 2025  
+**Version**: 1.0
